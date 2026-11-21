@@ -58,12 +58,15 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 
-# The target/ cache is shared by all platforms: cargo serializes concurrent
-# builds on its lock and reuses host artifacts (build scripts, proc-macros).
+# The caches are shared by all platforms of a multi-arch build, which run in
+# parallel. Cargo's package lock lives in $CARGO_HOME, outside the mounts, so
+# BuildKit must serialize access (sharing=locked) or concurrent unpacks of the
+# same crate collide. The shared target/ still reuses host artifacts (build
+# scripts, proc-macros) across platforms.
 ARG TARGETARCH
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/src/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/src/target,sharing=locked \
     set -eux; \
     case "$TARGETARCH" in \
         amd64) target=x86_64-unknown-linux-musl ;; \
