@@ -600,6 +600,23 @@ impl Session {
                 Err(e) if e.is_connect() => return Err(Error::Unreachable(e)),
                 Err(e) if e.is_builder() => return Err(Error::InvalidInput(e.to_string())),
                 Err(e) => {
+                    // Whatever happened, do not trust this session any more:
+                    // the next call logs in again.
+                    self.poisoned = true;
+                    // The device closes the connection without answering any
+                    // request of a session it replaced (another login, e.g.
+                    // the web UI), and keeps doing so: verified on
+                    // NE200-Outdoor v1. For a read, that is a session
+                    // rejection: log in again and retry. Timeouts and failures
+                    // after a reply started stay "outcome unknown".
+                    if act.is_replay_safe() && closed_without_reply(&e) {
+                        debug!(oid = act.oid(), error = %e, "connection closed without a reply");
+                        return Err(Error::SessionExpired(format!(
+                            "connection closed without a reply on {} {}",
+                            act.operation(),
+                            act.oid()
+                        )));
+                    }
                     return Err(Error::OutcomeUnknown {
                         reason: format!("transport error on {} {}", act.operation(), act.oid()),
                         source: Some(e),
@@ -672,6 +689,13 @@ impl Session {
         trace!(oid = act.oid(), reply = %plain, "act reply");
         parse_reply(act, &plain)
     }
+}
+
+/// Whether a transport error means the device dropped the connection before
+/// sending any reply (as opposed to a timeout, or a failure while reading a
+/// reply that had started).
+fn closed_without_reply(e: &reqwest::Error) -> bool {
+    e.is_request() && !e.is_timeout() && !e.is_connect() && !e.is_body() && !e.is_decode()
 }
 
 /// Sends a request, retrying on the sporadic HTTP 500 / 406 answers.

@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - Unreleased
+## [0.1.1] - 2026-11-21
+
+### Fixed
+
+- The TP-Link driver now recovers when another client (for instance the
+  device web UI) takes over the single administrator session. The device
+  closes the connection without a reply to every request of the replaced
+  session; the driver used to keep reusing that dead session, so every poll
+  failed until the gateway restarted. Any transport error now drops the
+  session, and a read closed without a reply triggers a transparent re-login.
+
+## [0.1.0] - 2026-11-21
 
 Initial release.
 
@@ -47,5 +58,6 @@ Initial release.
   in-memory mock.
 - Container image and Compose file.
 
-[Unreleased]: https://github.com/alcelafranque/sms-api-gateway/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/alcelafranque/sms-api-gateway/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/alcelafranque/sms-api-gateway/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/alcelafranque/sms-api-gateway/releases/tag/v0.1.0

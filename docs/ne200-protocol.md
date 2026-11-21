@@ -164,11 +164,19 @@ the driver stops probing at the first reply it can decrypt.
 
 ### Session loss
 
+When another client logs in (the web UI, for instance), the previous session
+is dead: the device closes the connection without any reply to every request
+made with it, even after the other client has logged out. The session never
+comes back; only a new login does.
+
 The driver considers the session lost, logs in again once, and repeats the
-request when the device answers `401` or `403`, redirects (`3xx`), or
-replies with a body that is not encrypted with the session key (plain text,
-or a ciphertext that does not decrypt). Requests that change state are not
-repeated when the outcome is ambiguous.
+request when the device answers `401` or `403`, redirects (`3xx`), replies
+with a body that is not encrypted with the session key (plain text, or a
+ciphertext that does not decrypt), or closes the connection without a reply
+to a read. Requests that change state (a send, a delete) are not repeated
+when the outcome is ambiguous; the session is dropped and the next request
+logs in again. A send is preceded by a read, which renews a dead session
+before anything is submitted.
 
 ## Acts
 

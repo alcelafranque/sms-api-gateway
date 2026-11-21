@@ -41,6 +41,9 @@ enum Failure {
     /// Drop the session and answer bytes nobody can decrypt, without
     /// executing the act.
     Garbage,
+    /// Another client logged in just before this act: the session is gone and
+    /// the connection is closed without any reply.
+    Replaced,
 }
 
 #[derive(Clone)]
@@ -132,6 +135,15 @@ impl Response {
         Self {
             status,
             body: format!("<html><title>{status}</title></html>"),
+            ..Self::ok("")
+        }
+    }
+
+    /// What the NE200 does with any request of a session it no longer knows
+    /// (replaced by another login): it closes the connection without a reply.
+    fn closed() -> Self {
+        Self {
+            bare: true,
             ..Self::ok("")
         }
     }
@@ -356,7 +368,7 @@ fn gdpr(dev: &mut Device, req: &Request, cookie_ok: bool) -> Response {
     assert!(hash_ok, "act signed with a wrong hash");
     let token_ok = dev.session.as_ref().map(|s| s.token.as_str()) == req.header("TokenID");
     if !cookie_ok || !token_ok {
-        return Response::status(403);
+        return Response::closed();
     }
     let cipher = dev.session.as_ref().unwrap().cipher.clone();
     let act: Value = serde_json::from_str(&cipher.open(&ciphertext).unwrap()).unwrap();
@@ -373,6 +385,7 @@ fn gdpr(dev: &mut Device, req: &Request, cookie_ok: bool) -> Response {
         return match failure {
             Failure::Forbidden => Response::status(403),
             Failure::Garbage => garbage(),
+            Failure::Replaced => Response::closed(),
         };
     }
     let reply = execute(dev, op, oid, &act["data"]);
@@ -738,6 +751,33 @@ async fn ambiguous_send_reply_is_never_resent() {
         assert_eq!(d.logins_ok, 1);
     }
     // The next call logs in again transparently.
+    assert_eq!(c.unread_count().await.unwrap(), 0);
+    let d = dev.lock().unwrap();
+    assert_eq!(d.logins_ok, 2);
+    assert!(d.sent.is_empty());
+}
+
+#[tokio::test]
+async fn replaced_session_is_renewed_transparently_on_reads() {
+    let mut d = device(SessionMode::Cbc, 0);
+    d.fail_on = Some(("go", "DEV2_LTE_NET_STATUS", Failure::Replaced));
+    let (url, dev) = spawn(d).await;
+    let mut c = client(&url, PASSWORD);
+    assert_eq!(c.unread_count().await.unwrap(), 0);
+    assert_eq!(dev.lock().unwrap().logins_ok, 2);
+}
+
+#[tokio::test]
+async fn send_on_a_replaced_session_is_unknown_and_never_resent() {
+    let mut d = device(SessionMode::Cbc, 0);
+    d.fail_on = Some(("so", "DEV2_LTE_SMS_SENDNEWMSG", Failure::Replaced));
+    let (url, dev) = spawn(d).await;
+    let mut c = client(&url, PASSWORD);
+    let err = c.send_sms("+33612345678", "hi").await.unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::OutcomeUnknown, "{err:?}");
+    assert!(!c.is_logged_in());
+    assert!(dev.lock().unwrap().sent.is_empty());
+    // The dead session is not reused: the next call logs in again.
     assert_eq!(c.unread_count().await.unwrap(), 0);
     let d = dev.lock().unwrap();
     assert_eq!(d.logins_ok, 2);
