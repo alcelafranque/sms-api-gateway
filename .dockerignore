@@ -1,0 +1,10 @@
+# Build context allowlist (read by docker and, without a .containerignore,
+# by podman/buildah). Keeps target/, .git and local secrets out of the
+# context.
+*
+!Cargo.toml
+!Cargo.lock
+!crates/
+!config.example.toml
+**/target
+**/*.rs.bk

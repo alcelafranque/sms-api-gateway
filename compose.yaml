@@ -1,0 +1,59 @@
+# Self-hosted sms-gateway with its PostgreSQL database.
+#
+#   cp .env.example .env        # then set the passwords
+#   docker compose up -d        # or: podman compose up -d
+#   docker compose run --rm sms-gateway app create ops --admin
+#
+# Without hardware: set MODEM_KIND=mock in .env (nothing is sent, and the
+# /v1/dev/* routes are enabled). See docs/deployment.md.
+
+name: sms-gateway
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sms
+      POSTGRES_DB: sms
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      # PostgreSQL 18+ images keep PGDATA under /var/lib/postgresql/<major>.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "sms", "-d", "sms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  sms-gateway:
+    image: ${SMS_GATEWAY_IMAGE:-ghcr.io/alcelafranque/sms-api-gateway:latest}
+    build:
+      context: .
+      dockerfile: Containerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SMS_GATEWAY__DATABASE__URL: postgres://sms:${POSTGRES_PASSWORD}@postgres:5432/sms
+      SMS_GATEWAY__MODEM__KIND: ${MODEM_KIND:-tplink}
+      SMS_GATEWAY__MODEM__TIMEZONE: ${MODEM_TIMEZONE:-Europe/Paris}
+      SMS_GATEWAY__MODEM__TPLINK__URL: ${MODEM_URL:-http://192.168.254.1}
+      SMS_GATEWAY__MODEM__TPLINK__PASSWORD: ${MODEM_PASSWORD:-}
+      SMS_GATEWAY__LOG__FORMAT: ${LOG_FORMAT:-text}
+    # Optional: any other setting, from a config file (environment
+    # variables above still take precedence).
+    # volumes:
+    #   - ./config.toml:/etc/sms-gateway/config.toml:ro
+    ports:
+      - ${SMS_GATEWAY_BIND:-127.0.0.1}:${SMS_GATEWAY_PORT:-8080}:8080
+    # Leaves time for server.shutdown_timeout_secs (30 s) to drain in-flight
+    # sends and release the device session.
+    stop_grace_period: 40s
+    # No healthcheck: the distroless image has no shell nor HTTP client.
+    # Probe GET /healthz and /readyz from the outside instead.
+
+volumes:
+  pgdata:

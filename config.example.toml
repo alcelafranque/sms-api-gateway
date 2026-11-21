@@ -1,0 +1,133 @@
+# sms-gateway configuration.
+#
+# Every key can be overridden by an environment variable named
+# SMS_GATEWAY__<SECTION>__<KEY> (double underscores between levels), e.g.
+#   SMS_GATEWAY__DATABASE__URL=postgres://...
+#   SMS_GATEWAY__MODEM__TPLINK__PASSWORD=...
+# Keep secrets (database URL, modem password) in the environment rather
+# than in this file. The file path is given with --config or
+# SMS_GATEWAY_CONFIG (default: ./config.toml when present).
+# Values shown are the defaults unless marked "example".
+
+[server]
+listen = "0.0.0.0:8080"
+request_timeout_secs = 30
+body_limit_bytes = 65536
+# Swagger UI at /docs (the OpenAPI document is always at /openapi.json).
+swagger_ui = true
+# Grace period for in-flight work on SIGTERM / Ctrl-C.
+shutdown_timeout_secs = 30
+
+[metrics]
+# Dedicated, unauthenticated Prometheus listener. When unset, /metrics is
+# served on the main listener to admin apps only.
+# listen = "127.0.0.1:9100"
+
+[log]
+# "text" or "json".
+format = "text"
+# tracing EnvFilter directives (RUST_LOG takes precedence).
+filter = "info,sqlx=warn,tower_http=info"
+
+[database]
+# Required. Prefer SMS_GATEWAY__DATABASE__URL.
+url = "postgres://sms:CHANGE_ME@localhost:5432/sms"   # example
+max_connections = 10
+connect_timeout_secs = 10
+# Apply pending migrations when `serve` starts (`sms-gateway migrate` does
+# it explicitly).
+migrate_on_start = true
+
+[modem]
+# Required by `serve`: "tplink" (TP-Link NE200-Outdoor and other EX-family
+# CPEs) or "mock" (in-memory device for development; also enables the
+# /v1/dev/* routes).
+kind = "tplink"   # example
+# IANA time zone of the device clock, used to convert the naive reception
+# time it reports for inbound SMS.
+timezone = "Europe/Paris"
+# Radio status refresh (signal level, operator...).
+status_interval_secs = 60
+# Safety timeout around each device call. A send exceeding it ends in
+# status "unknown" (it may have left the device) and is never re-sent.
+op_timeout_secs = 120
+
+[modem.tplink]
+url = "http://192.168.254.1"   # example
+# EX-family firmwares (NE200) log in as "user" with a password-only UI.
+username = "user"
+# Prefer SMS_GATEWAY__MODEM__TPLINK__PASSWORD.
+password = "CHANGE_ME"   # example
+# "auto", "cbc", "gcm" or "gcm_oaep".
+variant = "auto"
+timeout_secs = 30
+# Accept a self-signed certificate when url is https.
+accept_invalid_certs = false
+
+[outbound]
+# Minimum delay between two sends (operators dislike bursts).
+min_interval_ms = 3000
+# Attempts for a message failing with a retryable error (device
+# unreachable, session lost). Other errors are never retried.
+max_attempts = 5
+# Exponential backoff between retries: base * 2^(attempt-1), capped.
+retry_base_secs = 10
+retry_max_secs = 600
+# A message left in "sending" longer than this (gateway crash during a
+# send) is moved to "unknown". Must exceed modem.op_timeout_secs.
+sending_stale_secs = 600
+# Queue polling interval when idle (new messages wake the worker anyway).
+idle_poll_ms = 1000
+
+[inbound]
+# unread_count check interval.
+poll_interval_secs = 15
+# Full inbox scan even without unread messages (safety net).
+full_scan_interval_secs = 600
+# Delete messages from the device once stored. The device inbox is small:
+# when full, new SMS are lost.
+delete_after_ingest = true
+# Reply correlation: an inbound SMS is routed to the app that sent to the
+# same number within this window (after keyword routing).
+reply_window_hours = 72
+# App receiving the inbound SMS matching no keyword nor reply. Unset: such
+# messages are only stored.
+# default_app = "helpdesk"
+
+[validation]
+# Region used to parse numbers without a leading "+".
+default_region = "FR"
+# Maximum SMS segments per message (the NE200 concatenates up to 5). A text
+# fitting GSM-7 (extension characters such as €[]{}^~|\ count twice) holds
+# 160 characters in one SMS, 153 per segment beyond; any other text is sent
+# as UCS-2: 70 / 67 UTF-16 units, emoji counting twice. Default 5 segments:
+# 765 GSM-7 or 335 UCS-2 characters.
+max_segments = 5
+# If non-empty, only these E.164 prefixes are accepted as recipients.
+allowed_prefixes = []        # example: ["+33"]
+# Refused E.164 prefixes; checked before allowed_prefixes.
+denied_prefixes = []         # example: ["+3389", "+3381", "+3382"]
+
+[webhooks]
+timeout_secs = 10
+connect_timeout_secs = 5
+# Delays between attempts; the last one repeats until max_age_secs.
+retry_schedule_secs = [10, 60, 600, 3600]
+# A delivery still failing this long after its creation is abandoned.
+max_age_secs = 86400
+# Deliveries attempted in parallel.
+concurrency = 8
+poll_interval_ms = 2000
+
+[retention]
+# Retention job period.
+interval_secs = 3600
+# Erase message texts (and webhook payload texts) older than this; 0 = keep.
+message_body_days = 30
+# Delete messages older than this; 0 = keep. With
+# inbound.delete_after_ingest = false, keep this longer than messages stay
+# on the device, or they would be ingested again.
+message_days = 365
+# Delete finished webhook deliveries (and their attempt log) older than
+# this; 0 = keep.
+webhook_days = 30

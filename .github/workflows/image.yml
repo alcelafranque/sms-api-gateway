@@ -1,0 +1,84 @@
+name: Image
+
+# Multi-arch (linux/amd64, linux/arm64) container image on GHCR.
+#   v1.2.3 tag   -> 1.2.3, 1.2, latest
+#   push to main -> edge, sha-<short>
+#   pull request -> build only, nothing pushed
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/alcelafranque/sms-api-gateway
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No QEMU: the build stage runs natively and cross-compiles, and the
+      # final stage has no RUN instruction.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        env:
+          # Annotate the multi-arch index too (shown by GHCR).
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+        with:
+          images: ${{ env.IMAGE }}
+          # latest only for release tags (not pre-releases).
+          flavor: |
+            latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=edge,branch=main
+            type=sha,enable={{is_default_branch}}
+            type=ref,event=pr
+          labels: |
+            org.opencontainers.image.title=sms-api-gateway
+            org.opencontainers.image.description=HTTP SMS gateway in front of a TP-Link NE200-Outdoor 5G CPE, with PostgreSQL storage
+            org.opencontainers.image.licenses=GPL-3.0-or-later
+          annotations: |
+            org.opencontainers.image.title=sms-api-gateway
+            org.opencontainers.image.description=HTTP SMS gateway in front of a TP-Link NE200-Outdoor 5G CPE, with PostgreSQL storage
+            org.opencontainers.image.licenses=GPL-3.0-or-later
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
