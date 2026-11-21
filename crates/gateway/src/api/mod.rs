@@ -55,6 +55,8 @@ pub struct AppState {
         health::healthz,
         health::readyz,
     ),
+    // Types only used in query parameters are not collected automatically.
+    components(schemas(crate::messages::Order)),
     modifiers(&BearerAuth),
     tags(
         (name = "messages", description = "Outbound and inbound SMS"),
@@ -147,4 +149,38 @@ pub fn metrics_router(state: AppState) -> Router {
     Router::new()
         .route("/metrics", get(health::metrics_open))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use utoipa::OpenApi;
+
+    use super::ApiDoc;
+
+    fn collect_refs(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, v) in map {
+                    match (key.as_str(), v) {
+                        ("$ref", serde_json::Value::String(r)) => out.push(r.clone()),
+                        _ => collect_refs(v, out),
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|v| collect_refs(v, out)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn every_schema_reference_in_the_openapi_document_resolves() {
+        let doc = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let mut refs = Vec::new();
+        collect_refs(&doc, &mut refs);
+        assert!(!refs.is_empty());
+        for r in refs {
+            let pointer = r.strip_prefix('#').expect("local reference");
+            assert!(doc.pointer(pointer).is_some(), "unresolved reference {r}");
+        }
+    }
 }

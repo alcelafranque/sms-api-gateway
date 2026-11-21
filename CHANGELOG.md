@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session; the driver used to keep reusing that dead session, so every poll
   failed until the gateway restarted. Any transport error now drops the
   session, and a read closed without a reply triggers a transparent re-login.
+- The OpenAPI document declares the `Order` schema used by the `order`
+  query parameter of `GET /v1/messages`; Swagger UI failed to resolve it.
 
 ## [0.1.0] - 2026-11-21
 
